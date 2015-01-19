@@ -1,0 +1,5 @@
+This plugin performs a coloration of a set of polygons, ensuring that two contiguous polygons does not have the same color.
+
+It take a vector layer of polygons as input, and write them to a new file with a new attribute for the color index.
+
+The algorithm does not guarantee a minimum number of colors, but try to minimize it.
