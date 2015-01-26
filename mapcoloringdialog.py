@@ -28,7 +28,12 @@ from PyQt4.QtGui import *
 from qgis.core import *
 from qgis.gui import *
 
+import os
+
 from ui_mapcoloring import Ui_MapColoring
+
+import datetime
+print "[debug] mapcoloring plugin loaded at " + str(datetime.datetime.now())
 
 class MapColoringDialog(QDialog, Ui_MapColoring):
     algorithme = ["Welsh - Powell", "DSATUR"]
@@ -45,6 +50,7 @@ class MapColoringDialog(QDialog, Ui_MapColoring):
 
 
     def getLayerNames(self):
+        print "getLayerNames triggered"
         layermap = QgsMapLayerRegistry.instance().mapLayers()
         layerList = []
         for name, layer in layermap.iteritems():
@@ -56,6 +62,8 @@ class MapColoringDialog(QDialog, Ui_MapColoring):
 
     # Return QgsVectorLayer from a layer name ( as string )
     def getVectorLayerByName(self, layerName):
+        print "getVectorLayerByName triggered"
+ 
         layermap = QgsMapLayerRegistry.instance().mapLayers()
         for name, layer in layermap.iteritems():
             if layer.type() == QgsMapLayer.VectorLayer and layer.name() == layerName:
@@ -66,30 +74,57 @@ class MapColoringDialog(QDialog, Ui_MapColoring):
 
 
     def outFile(self):
+        print "outFile triggered"
+
         self.outputLayerEdit.clear()
         (self.shapefileName, self.encoding) = self.saveDialog(self)
         if self.shapefileName is None or self.encoding is None:
             return
-        self.outputLayerEdit.setText(QString(self.shapefileName))
-
+        if QGis.QGIS_VERSION_INT < 10900: # QGIS 1.x API style
+            self.outputLayerEdit.setText(QString(self.shapefileName))
+        else:
+            self.outputLayerEdit.setText(self.shapefileName)
+            
     def saveDialog(self, parent ):
+        print "saveDialog triggered"
         settings = QSettings()
-        dirName = settings.value( "/UI/lastShapefileDir" ).toString()
-        filtering = QString( "Shapefiles (*.shp)" )
-        encode = settings.value( "/UI/encoding" ).toString()
-        fileDialog = QgsEncodingFileDialog( parent, "Save output shapefile", dirName, filtering, encode )
-        fileDialog.setDefaultSuffix( QString( "shp" ) )
-        fileDialog.setFileMode( QFileDialog.AnyFile )
-        fileDialog.setAcceptMode( QFileDialog.AcceptSave )
-        fileDialog.setConfirmOverwrite( True )
-        if not fileDialog.exec_() == QDialog.Accepted:
-            return None, None
-        files = fileDialog.selectedFiles()
-        settings.setValue("/UI/lastShapefileDir", QVariant( QFileInfo( unicode( files.first() ) ).absolutePath() ) )
-        return ( unicode( files.first() ), unicode( fileDialog.encoding() ) )
+        if QGis.QGIS_VERSION_INT < 10900: # QGIS 1.x API style
+            dirName = settings.value( "/UI/lastShapefileDir" ).toString()
+            filtering = QString( "Shapefiles (*.shp)" )
+            encode = settings.value( "/UI/encoding" ).toString()
+            fileDialog = QgsEncodingFileDialog( parent, "Save output shapefile", dirName, filtering, encode )
+            fileDialog.setDefaultSuffix( QString( "shp" ) )
+            fileDialog.setFileMode( QFileDialog.AnyFile )
+            fileDialog.setAcceptMode( QFileDialog.AcceptSave )
+            fileDialog.setConfirmOverwrite( True )
+            if not fileDialog.exec_() == QDialog.Accepted:
+                return None, None
+            files = fileDialog.selectedFiles()
+            settings.setValue("/UI/lastShapefileDir", QVariant( QFileInfo( unicode( files.first() ) ).absolutePath() ) )
+            return ( unicode( files.first() ), unicode( fileDialog.encoding() )) 
+            
+        else: # QGIS 2.x API style
+            dirName = settings.value( "/UI/lastShapefileDir" )
+            filtering = u"Shapefiles (*.shp)"
+            encode = settings.value( "/UI/encoding" )
+            fileDialog = QgsEncodingFileDialog( parent, "Save output shapefile", dirName, filtering, encode )
+            fileDialog.setDefaultSuffix( u"shp")
+            fileDialog.setFileMode( QFileDialog.AnyFile )
+            fileDialog.setAcceptMode( QFileDialog.AcceptSave )
+            fileDialog.setConfirmOverwrite( True )
+            if not fileDialog.exec_() == QDialog.Accepted:
+                return None, None
+            files = fileDialog.selectedFiles()
+            filepath =  os.path.abspath(files[0])
+
+            #print files
+            settings.setValue("/UI/lastShapefileDir",  filepath ) 
+            return ( filepath ), unicode( fileDialog.encoding() ) 
 
     #overide
     def accept(self):
+        print "accept triggered"
+
         if self.inputLayerCombo.currentText() == "":
             QMessageBox.information(self, "Error", self.tr("Please specify input vector layer"))
             return
@@ -103,24 +138,41 @@ class MapColoringDialog(QDialog, Ui_MapColoring):
 
 
     def computeMatrixAll(self, m, layer, selected):
-        # Calcul la matrice de connection en testant toutes les combinaisons
+                      
+        print "computeMatrixAll triggered"
+
+        # Calcul la matrice de connection en testant toutes les combinaisons - this
         feature = QgsFeature()
         poly = []
-        for s in selected:
-            layer.featureAtId(s, feature)
-            poly.append(QgsGeometry(feature.geometry()))
-        for i in range(len(selected)-1):
-            for j in range(i+1, len(selected)):
-                if poly[i].touches(poly[j]):
-                    inter = poly[i].intersection(poly[j])
-                    if not inter is None:
-                        if inter.type() in [1, 2]:
+        
+        if QGis.QGIS_VERSION_INT < 10900: # QGIS 1.x API style
+            for s in selected:
+                layer.featureAtId(s, feature)
+                poly.append(QgsGeometry(feature.geometry()))
+        else:
+            for s in selected:
+                request=QgsFeatureRequest()
+                request.setFilterFid(s)
+                # layer.featureAtId(s, feature)
+                for feature in layer.getFeatures(request): # todo: fetch only geometry
+                    poly.append(feature.geometry())
+        
+        for i in range(len(selected)-1): # boucle sur sous ensemble des objets (après découpage en lot par computeMatrixRec)
+            for j in range(i+1, len(selected)): #boucle sur tous les restants non traités
+                if poly[i].touches(poly[j]):    # si le polygone i touche le polygone j
+                    inter = poly[i].intersection(poly[j]) #test d'intersection
+                    if not inter is None:       # si pas d'intersection
+                        if inter.type() in [1, 2]: # ajout des deux polygones dans m , graphe des relations inter polygones
                             m[selected[i]].add(selected[j])
                             m[selected[j]].add(selected[i])
+                            
 
 
-    def computeMatrixRec(self, m, layer, bbox, selected, progressFrom, progressTo):
-        if len(selected) <= 20:
+    def computeMatrixRec(self, m, layer, bbox, selected, progressFrom, progressTo): 
+        print "computeMatrixRec triggered"
+        # compute iterative dichotomic segmentation of whole feature sets, and split it until it reaches small enough dataset, then run computeMatrixALL
+
+        if len(selected) <= 20: #compute with no progress bar
             self.computeMatrixAll(m, layer, selected)
         else:
             # Calcul récursif après partage en deux
@@ -128,7 +180,7 @@ class MapColoringDialog(QDialog, Ui_MapColoring):
             bbox0 = QgsRectangle(bbox[selected[0]])
             for i in range(1, len(selected)):
                 bbox0.combineExtentWith(bbox[selected[i]])
-            # Partage en deux de la bbox
+            # Partage en deux de la bbox 
             if bbox0.width() > bbox0.height():
                 # Partage vertical
                 bbox1 = QgsRectangle(bbox0)
@@ -155,22 +207,32 @@ class MapColoringDialog(QDialog, Ui_MapColoring):
 
 
     def computeMatrix(self, layer):
+        print "computeMatrix triggered"
         # Extraction des BBox
-        nbFeat = layer.featureCount()
+        
+        nbFeat = layer.featureCount() # nombre d'objets
         bbox = []
         feature = QgsFeature()
-        for i in range(nbFeat):
-            layer.featureAtId(i, feature)
-            bbox.append(feature.geometry().boundingBox())
-
+        
+        if QGis.QGIS_VERSION_INT < 10900: # QGIS 1.x API style
+            for i in range(nbFeat):
+                layer.featureAtId(i, feature)
+                bbox.append(feature.geometry().boundingBox())
+        else:
+            iter = layer.getFeatures()
+            for feature in iter:
+                bbox.append(feature.geometry().boundingBox())
+                
         # Initialisation des sommets adjacents
-        m = [set() for i in range(nbFeat)]
-        # Calcul récursif
+        m = [set() for i in range(nbFeat)] # one list for each feature, will store adjacent vertices
+        # Calcul récursif 
         self.computeMatrixRec(m, layer, bbox, range(nbFeat), 0.0, 100.0)
         return m
 
 
     def colorationWelshPowell(self, m):
+        print "colorationWelshPowell triggered"
+
         vertex = range(len(m))
         vertex.sort(key=lambda i: len(m[i]), reverse=True)
 
@@ -199,6 +261,7 @@ class MapColoringDialog(QDialog, Ui_MapColoring):
 
 
     def colorationDSATUR(self, m):
+        print "colorationDSATUR triggered"
         # Classement des sommets en fonction de leur nombre DSAT
         DSAT = []
         vertexDSAT = [len(adj) for adj in m]
@@ -259,11 +322,13 @@ class MapColoringDialog(QDialog, Ui_MapColoring):
 
 
     def do(self, inputLayer, outputLayer):
+        print "do triggered"
         vlayer = self.getVectorLayerByName(inputLayer)
         nbFeat = vlayer.featureCount()
 
         # Matrice des connections
         self.stateLabel.setText("calculating connexion graph :")
+        print " do: compute matrix to m variable"
         m = self.computeMatrix(vlayer)
 
         # Classement des sommets par nombre de connections, et liste des sommets adjacents
@@ -271,11 +336,15 @@ class MapColoringDialog(QDialog, Ui_MapColoring):
         self.progressBar.setValue(0)
         algoId = self.algorithmeCombo.currentIndex()
         if algoId == 0:
+            print " do - launch colorationWelshPowell(m)"
             vertexColor = self.colorationWelshPowell(m)
+            
         elif algoId == 1:
+            print " do - launch colorationDSATUR(m)"
             vertexColor = self.colorationDSATUR(m)
 
         # Enregistrement dans le fichier final
+        print " do - save final file"
         self.stateLabel.setText("Save output file :")
         self.progressBar.setValue(0)
         # Liste des champs de données
@@ -293,6 +362,7 @@ class MapColoringDialog(QDialog, Ui_MapColoring):
         feature = QgsFeature()
         done = 0
         for i in range(nbFeat):
+            
             vlayer.featureAtId(i, feature)
             attr_src = feature.attributeMap()
             attr_dst = {0: QVariant(vertexColor[i])}

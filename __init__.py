@@ -25,7 +25,7 @@ def name():
 def description():
     return "Coloring a map such that two contiguous polygons do not have the same color. The algorithm does not always provide a solution with a minimum number of colors."
 def version():
-    return "Version 0.1"
+    return "Version 0.2"
 def icon():
     return "icon.png"
 def qgisMinimumVersion():

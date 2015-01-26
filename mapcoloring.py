@@ -40,7 +40,10 @@ class MapColoring:
         self.plugin_dir = QFileInfo(QgsApplication.qgisUserDbFilePath()).path() + "/python/plugins/mapcoloring"
         # initialize locale
         localePath = ""
-        locale = QSettings().value("locale/userLocale").toString()[0:2]
+        if QGis.QGIS_VERSION_INT < 10900:
+            locale = QSettings().value("locale/userLocale").toString()[0:2]
+        else:
+            locale = QSettings().value("locale/userLocale")[0:2]
 
         if QFileInfo(self.plugin_dir).exists():
             localePath = self.plugin_dir + "/i18n/mapcoloring_" + locale + ".qm"
